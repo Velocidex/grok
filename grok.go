@@ -31,6 +31,8 @@ type Config struct {
 // Grok object us used to load patterns and deconstruct strings using those
 // patterns.
 type Grok struct {
+	mu sync.Mutex
+
 	rawPattern       map[string]string
 	config           *Config
 	aliases          map[string]string
@@ -219,7 +221,14 @@ func (g *Grok) compiledParse(gr *gRegexp, text string) (map[string]string, error
 					continue
 				}
 				name = g.nameToAlias(name)
-				captures[name] = match[i]
+
+				// If there are two captures of the same name, pick
+				// the one that is not empty. This allows alternative
+				// matched to be defined.
+				old_capture, pres := captures[name]
+				if !pres || old_capture == "" {
+					captures[name] = match[i]
+				}
 			}
 		}
 	}
@@ -387,11 +396,17 @@ func (g *Grok) denormalizePattern(pattern string, storedPatterns map[string]*gPa
 
 func (g *Grok) aliasizePatternName(name string) string {
 	alias := symbolic.ReplaceAllString(name, "_")
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	g.aliases[alias] = name
 	return alias
 }
 
 func (g *Grok) nameToAlias(name string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	alias, ok := g.aliases[name]
 	if ok {
 		return alias
